@@ -9,6 +9,7 @@ use std::{
     io::{self, Read},
     process,
     sync::Arc,
+    time::Duration,
 };
 
 const PATHS_COUNT_AWS_THRESHOLD: usize = 50;
@@ -16,7 +17,7 @@ const NIX_CACHE_S3_BUCKET: &str = "nix-cache";
 const NIX_CACHE_CDN_URL: &str = "https://cache.nixos.org";
 const NIX_CACHE_REGION: &str = "us-east-1";
 const USER_AGENT: &str = "grep-nixos-cache 1.0 (https://github.com/delroth/grep-nixos-cache)";
-const YARA_TIMEOUT_SECS: i32 = 30;
+const YARA_TIMEOUT_SECS: Duration = Duration::new(30, 0);
 
 #[derive(Debug, Parser)]
 #[command(author, version, about, long_about = None)]
@@ -98,16 +99,22 @@ impl StringMatcher<'_> {
 
 #[derive(Clone)]
 struct YaraMatcher {
-    rules: Arc<yara::Rules>,
+    rules: Arc<yara_x::Rules>,
 }
 
 impl YaraMatcher {
     fn new(rules_file: &String) -> Result<YaraMatcher> {
-        let compiler = yara::Compiler::new()?.add_rules_file(rules_file)?;
-        let rules = compiler.compile_rules()?;
+        let rules: String = fs::read_to_string(rules_file).expect("Error reading Yara rules file");
+
+        let mut compiler = yara_x::Compiler::new();
+
+        compiler
+            .add_source(rules.as_str())
+            .expect("Could not compile Yara rules");
+        let rules = compiler.build();
 
         Ok(YaraMatcher {
-            rules: Arc::new(rules),
+            rules: rules.into(),
         })
     }
 }
@@ -123,8 +130,13 @@ impl Matcher<'_> {
                 }
             }
             Matcher::Yara(ym) => {
-                let matches = ym.rules.scan_mem(haystack, YARA_TIMEOUT_SECS)?;
-                Ok(matches.iter().map(|r| r.identifier.to_string()).collect())
+                let mut scanner = yara_x::Scanner::new(&ym.rules);
+                let results = scanner.set_timeout(YARA_TIMEOUT_SECS).scan(haystack);
+
+                Ok(results?
+                    .matching_rules()
+                    .map(|r| r.identifier().to_string())
+                    .collect())
             }
         }
     }
