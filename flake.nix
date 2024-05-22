@@ -19,6 +19,8 @@
         defaultPackage = naersk'.buildPackage {
           src = ./.;
 
+          env.YRX_REGENERATE_MODULES_RS = "false";
+
           nativeBuildInputs = with pkgs; [ rustPlatform.bindgenHook pkg-config ];
           buildInputs = with pkgs; [ openssl ];
         };
